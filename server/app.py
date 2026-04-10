@@ -16,6 +16,9 @@ env_server = HTTPEnvServer(
 # Register the routes on the app
 env_server.register_routes(app)
 
-if __name__ == "__main__":
+def main():
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+if __name__ == "__main__":
+    main()

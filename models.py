@@ -30,6 +30,15 @@ class Book(BaseModel):
 class Finalize(BaseModel):
     type: Literal["finalize"] = "finalize"
 
+from openenv.core.env_server.types import State
+
+class TravelState(State):
+    """Extended state for travel_pro environment metrics."""
+    balance: float = 0.0
+    error_log: List[str] = []
+    itinerary_length: int = 0
+    done: bool = False
+
 class TravelAction(BaseModel):
     """Discriminated Union for Travel Actions."""
     action: Union[Search, Book, Finalize] = Field(..., discriminator="type")

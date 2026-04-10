@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 
-from travel_pro.models import UserGoal, TravelObservation, TravelAction, Search, Book, Finalize
+from travel_pro.models import UserGoal, TravelObservation, TravelAction, Search, Book, Finalize, TravelState
 from travel_pro.database import SessionLocal, init_db, bulk_insert_data, Flight, Hotel
 from travel_pro.scenarios import ScenarioManager
 
@@ -14,7 +14,7 @@ class TravelEnv(Environment):
     """
     
     def __init__(self):
-        self._state = State(episode_id=str(uuid4()), step_count=0)
+        self._state = TravelState(episode_id=str(uuid4()), step_count=0)
         self.current_goal: Optional[UserGoal] = None
         self.itinerary: List[str] = []
         self.balance: float = 0.0
@@ -41,8 +41,14 @@ class TravelEnv(Environment):
         # 4. Level 3 Special Logic: Price Volatility Flag
         self.price_volatility = (level == 3)
         
-        # 5. Reset internal state
-        self._state = State(episode_id=str(uuid4()), step_count=0)
+        self._state = TravelState(
+            episode_id=str(uuid4()), 
+            step_count=0,
+            balance=self.balance,
+            error_log=self.error_log,
+            itinerary_length=0,
+            done=False
+        )
         self.itinerary = []
         self.balance = self.current_goal.budget
         self.error_log = ["Environment reset successful."]
@@ -87,6 +93,10 @@ class TravelEnv(Environment):
             "step_count": self._state.step_count,
             "itinerary_length": len(self.itinerary)
         }
+        self._state.balance = self.balance
+        self._state.error_log = self.error_log
+        self._state.itinerary_length = len(self.itinerary)
+        self._state.done = self.done
         
         return self._get_obs(), reward, self.done, info
 
@@ -229,6 +239,5 @@ class TravelEnv(Environment):
             self.error_log.append("Trip finalized prematurely. Goal failed.")
             return -0.5, True
 
-    @property
     def state(self) -> State:
         return self._state

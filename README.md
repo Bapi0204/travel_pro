@@ -42,7 +42,43 @@ The environment includes 3 programmatic graders:
 ## Reward Function
 - **Efficiency Penalty**: -0.05 per step to encourage fast completion.
 - **Success Reward**: +1.0 for a successful multi-item itinerary.
-- **Constraint Violations**: Deductions for failing to meet user requirements (e.g., booking a low-rated hotel).
+- **Constraint Violations**: Deductions (-1.0) for failing to meet user requirements (e.g., booking a low-rated hotel).
+
+## Technical Specification
+
+### Action Space
+The environment uses a `TravelAction` model which wraps one of the following:
+- **Search**: `query` (str) - Searches for flights and hotels in the database.
+- **Book**: `item_id` (int), `item_type` (str) - Books a specific flight or hotel.
+- **Finalize**: Completes the episode and triggers the final grader.
+
+### Observation Space
+The `TravelObservation` includes:
+- `itinerary`: List of booked strings.
+- `available_options`: List of strings showing IDs and prices.
+- `balance`: Current remaining funds.
+- `current_goal`: The `UserGoal` object containing destination, budget, and constraints.
+- `error_log`: Historical log of events (price expiry, violations).
+
+## Tasks & Difficulty
+
+| Task ID | Name | Difficulty | Description |
+| :--- | :--- | :--- | :--- |
+| `level_1` | Happy Path | Easy | High availability, no volatility. Basic search-book-finalize flow. |
+| `level_2` | Adversarial | Medium | Reduced hotel availability (Strike) and strict star-rating constraints. |
+| `level_3` | Chaos Mode | Hard | Prices increase by 1-5% each step. Booking fails if data is stale. |
+
+## Baseline Scores
+
+Evaluation performed using `Qwen/Qwen2.5-72B-Instruct` via the provided `inference.py` script.
+
+| Level | Success Rate | Avg Steps | Avg Reward |
+| :--- | :--- | :--- | :--- |
+| Level 1 | 0.0% | 1.0 | -0.55 |
+| Level 2 | 0.0% | 1.0 | -0.55 |
+| Level 3 | 0.0% | 1.0 | -0.55 |
+
+*Note: The current baseline agent has difficulty following multi-step booking rules and often finalizes prematurely. This provides a clear benchmark for researchers to improve upon.*
 
 The client uses WebSocket connections for:
 - **Lower latency**: No HTTP connection overhead per request

@@ -18,13 +18,28 @@ class BudgetOptimizationGrader:
     """Grades how well the agent optimized the budget."""
     @staticmethod
     def grade(state: Any) -> float:
-        # We'll use a placeholder logic that would be refined in a real evaluation
-        # For now, we return 1.0 if done and no major issues.
+        info = getattr(state, "info", {})
+        if not info.get("done", False): return 0.0
+        
+        # If successfully finished, score is based on itinerary length and balance
+        itinerary_len = info.get("itinerary_length", 0)
+        if itinerary_len < 2: return 0.0
+        
+        # Placeholder for budget optimization: 1.0 if completed
         return 1.0
 
 class ConstraintGrader:
     """Grades adherence to destination and rating constraints."""
     @staticmethod
     def grade(state: Any) -> float:
-        # Look for "Violation" in error logs if provided via state
-        return 1.0
+        info = getattr(state, "info", {})
+        error_log = info.get("error_log", [])
+        
+        # Penalty for each constraint violation
+        violations = sum(1 for log in error_log if "Violation" in log)
+        score = max(0.0, 1.0 - (violations * 0.5))
+        
+        # Must have completed at least some parts of the trip
+        if info.get("itinerary_length", 0) == 0: return 0.0
+        
+        return score
