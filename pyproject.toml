@@ -19,6 +19,7 @@ dependencies = [
     "langchain-openai",
     "langgraph",
     "openai",
+    "python-dotenv",
 ]
 
 [project.optional-dependencies]
@@ -31,5 +32,6 @@ dev = [
 server = "travel_pro.server.app:main"
 
 [tool.setuptools]
-include-package-data = true
+package-dir = {"travel_pro" = "."}
 packages = ["travel_pro"]
+include-package-data = true

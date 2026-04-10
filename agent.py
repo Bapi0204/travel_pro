@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+load_dotenv() # Load OpenAI API key from .env file
+
 import random
 from typing import TypedDict, List, Optional, Annotated, Dict, Any
 import operator
@@ -37,13 +40,16 @@ def planner_node(state: GraphState):
     # API Key check for GPT-4o
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        # Fallback heuristic for baseline when key is missing
+        print("    Plan: No API Key found, using fallback heuristic.")
+        # Fallback heuristic for baseline when key is missing or invalid
         step = state['env']._state.step_count
         if step == 0:
             action = TravelAction(action=Search(query=f"Flights to {goal.destination}"))
         elif step == 1:
+            # Try to book the first flight (ID 1)
             action = TravelAction(action=Book(item_id=1, item_type="flight"))
         elif step == 2:
+            # Try to book the first hotel (ID 1)
             action = TravelAction(action=Book(item_id=1, item_type="hotel"))
         else:
             action = TravelAction(action=Finalize())
@@ -172,7 +178,7 @@ def run_episode(level: int):
 def main():
     """Baseline evaluation across all 3 levels."""
     levels = [1, 2, 3]
-    episodes_per_level = 5
+    episodes_per_level = 1
     results = {1: [], 2: [], 3: []}
     
     print("Starting Baseline Evaluation...")

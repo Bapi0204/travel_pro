@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
 import argparse
 from travel_pro.agent import run_episode
 

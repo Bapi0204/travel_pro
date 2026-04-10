@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: openenv-travel_pro
+Version: 0.1.0
+Summary: Travel Pro environment for OpenEnv
+Requires-Python: >=3.10
+Requires-Dist: openenv-core[core]>=0.2.1
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: sqlalchemy
+Requires-Dist: pydantic
+Requires-Dist: langchain-openai
+Requires-Dist: langgraph
+Requires-Dist: openai
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"

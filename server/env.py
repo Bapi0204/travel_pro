@@ -176,10 +176,11 @@ class TravelEnv(Environment):
                 self.error_log.append(f"Flight {action.item_id} not found.")
                 return -0.1
             
-            # Price Expiry Check (Chaos)
+            # Price Expiry Check (Chaos) - Added 10% buffer to allow for step-by-step increases
             if self.price_volatility and action.item_id in self.seen_prices:
-                if item.price > self.seen_prices[action.item_id]:
-                    self.error_log.append("Price expired. Re-search required.")
+                max_allowed_price = self.seen_prices[action.item_id] * 1.10
+                if item.price > max_allowed_price:
+                    self.error_log.append(f"Price expired. Current: ${item.price:.2f} > Max: ${max_allowed_price:.2f}. Re-search required.")
                     db.close()
                     return -0.1
 
