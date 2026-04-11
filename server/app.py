@@ -1,20 +1,19 @@
 from fastapi import FastAPI
-from openenv.core.env_server import HTTPEnvServer
+from openenv.core.env_server import create_web_interface_app
 from travel_pro.server.env import TravelEnv
 from travel_pro.models import TravelAction, TravelObservation
 
-# Create the FastAPI application
-app = FastAPI(title="Travel Pro Environment Server")
-
-# Initialize the OpenEnv server with our environment class and models
-env_server = HTTPEnvServer(
+# Initialize the OpenEnv server with the web interface enabled
+# This helper automatically creates the FastAPI app and mounts the Gradio UI at /web
+app = create_web_interface_app(
     env=TravelEnv,
     action_cls=TravelAction,
-    observation_cls=TravelObservation
+    observation_cls=TravelObservation,
+    env_name="travel_pro"
 )
 
-# Register the routes on the app
-env_server.register_routes(app)
+# Optional: You can still add custom routes here if needed, 
+# but create_web_interface_app already handles / and /web redirects.
 
 def main():
     import uvicorn

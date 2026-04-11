@@ -124,16 +124,18 @@ def run_task(level: int):
         
         try:
             if act_type == "Search":
-                action = TravelAction(action=Search(query=params.get("query", "")))
+                action = TravelAction(type="search", query=params.get("query", ""))
             elif act_type == "Book":
-                action = TravelAction(action=Book(item_id=params.get("item_id"), item_type=params.get("item_type")))
+                action = TravelAction(type="book", item_id=params.get("item_id"), item_type=params.get("item_type"))
             else:
-                action = TravelAction(action=Finalize())
+                action = TravelAction(type="finalize")
         except Exception as e:
             reasoning = f"PARSING ERROR: {e}"
             action = TravelAction(action=Finalize())
         
-        obs, reward, done, info = env.step(action)
+        obs = env.step(action)
+        reward = obs.reward or 0.0
+        done = obs.done
         rewards.append(reward)
         
         # Log this step in demo style
@@ -153,7 +155,7 @@ def run_task(level: int):
             break
 
     # Comprehensive Grading
-    state = env.state()
+    state = env.state
     # Add info for graders that look at info dict
     state.info = {
         "done": obs.done,

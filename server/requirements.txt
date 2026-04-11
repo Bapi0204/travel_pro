@@ -7,3 +7,4 @@ openenv-core
 langchain-openai
 langgraph
 openai
+gradio

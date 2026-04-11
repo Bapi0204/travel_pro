@@ -9,7 +9,9 @@ class UserGoal(BaseModel):
     is_direct_flight_required: bool = False
     max_steps: int = 10
 
-class TravelObservation(BaseModel):
+from openenv.core.env_server.types import Action, Observation, State
+
+class TravelObservation(Observation):
     """Pydantic V2 model for observations in the Travel Pro environment."""
     itinerary: List[str] = Field(default_factory=list)
     available_options: List[str] = Field(default_factory=list)
@@ -39,6 +41,9 @@ class TravelState(State):
     itinerary_length: int = 0
     done: bool = False
 
-class TravelAction(BaseModel):
-    """Discriminated Union for Travel Actions."""
-    action: Union[Search, Book, Finalize] = Field(..., discriminator="type")
+class TravelAction(Action):
+    """Flattened Travel Action compatible with Web UI and Inference."""
+    type: Literal["search", "book", "finalize"]
+    query: Optional[str] = None
+    item_id: Optional[int] = None
+    item_type: Optional[Literal["flight", "hotel"]] = None

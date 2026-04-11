@@ -6,7 +6,7 @@ colorTo: yellow
 sdk: docker
 pinned: false
 app_port: 8000
-base_path: /web
+base_path: /
 tags:
   - openenv
 ---
@@ -53,6 +53,31 @@ Performance has been significantly improved by switching to **GPT-4o** and imple
 | **1: Happy Path** | 100% | 3.0 | 0.960 | GPT-4o |
 | **2: Adversarial** | 80% | 5.2 | 0.820 | GPT-4o |
 | **3: Chaos** | 60% | 8.5 | 0.650 | GPT-4o |
+
+---
+
+## ⚡ Quick Start (Python)
+
+If you want to quickly test the environment logic without running a full LLM agent, use the `demo.py` script:
+
+```bash
+uv run python demo.py
+```
+
+### Minimal Code Example
+```python
+from travel_pro.server.env import TravelEnv
+from travel_pro.models import TravelAction
+
+env = TravelEnv()
+obs = env.reset(level=1)
+print(f"Goal: {obs.current_goal.destination}")
+
+# Perform a search
+action = TravelAction(type="search", query="Paris")
+obs = env.step(action)
+print(obs.available_options)
+```
 
 ---
 

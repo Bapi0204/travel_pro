@@ -73,10 +73,10 @@ class TravelEnv(Environment):
         
         return self._get_obs()
 
-    def step(self, action: TravelAction) -> Tuple[TravelObservation, float, bool, Dict[str, Any]]:
+    def step(self, action: TravelAction) -> TravelObservation:
         """
         Executes a step in the environment.
-        Returns: (observation, reward, done, info)
+        Returns: observation (containing reward and done status)
         """
         assert self.current_goal is not None, "Environment must be reset before step."
         self._state.step_count += 1
@@ -86,14 +86,13 @@ class TravelEnv(Environment):
         if self.price_volatility:
             self._update_prices()
             
-        act = action.action
         step_reward = 0.0
         
-        if isinstance(act, Search):
-            step_reward = self._handle_search(act)
-        elif isinstance(act, Book):
-            step_reward = self._handle_book(act)
-        elif isinstance(act, Finalize):
+        if action.type == "search":
+            step_reward = self._handle_search(action)
+        elif action.type == "book":
+            step_reward = self._handle_book(action)
+        elif action.type == "finalize":
             step_reward, self.done = self._handle_finalize()
         
         reward += step_reward
@@ -109,12 +108,12 @@ class TravelEnv(Environment):
             "step_count": self._state.step_count,
             "itinerary_length": len(self.itinerary)
         }
-        self._state.balance = self.balance
-        self._state.error_log = self.error_log
-        self._state.itinerary_length = len(self.itinerary)
         self._state.done = self.done
         
-        return self._get_obs(), reward, self.done, info
+        obs = self._get_obs()
+        obs.reward = reward
+        obs.done = self.done
+        return obs
 
     def _get_obs(self) -> TravelObservation:
         """Constructs the current observation based on last search or default."""
@@ -189,7 +188,7 @@ class TravelEnv(Environment):
         db.commit()
         db.close()
 
-    def _handle_search(self, action: Search) -> float:
+    def _handle_search(self, action: TravelAction) -> float:
         """Handles searching with SQL filtering and tracks prices for expiry checks."""
         db = SessionLocal()
         city_code = self._get_city_code(action.query)
@@ -207,7 +206,7 @@ class TravelEnv(Environment):
         self.error_log.append(f"Search for '{action.query}' (Code: {city_code}) found {len(self.last_search_flights)} flights and {len(self.last_search_hotels)} hotels.")
         return 0.0
 
-    def _handle_book(self, action: Book) -> float:
+    def _handle_book(self, action: TravelAction) -> float:
         """Handles booking with price expiry and constraint validation."""
         db = SessionLocal()
         reward = 0.0
@@ -271,5 +270,6 @@ class TravelEnv(Environment):
             self.error_log.append("Trip finalized prematurely. Goal failed.")
             return -0.5, True
 
+    @property
     def state(self) -> State:
         return self._state
