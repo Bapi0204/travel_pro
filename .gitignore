@@ -1,0 +1,23 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+
+# Database files
+*.db
+*.sqlite3
+
+# Logs
+*.log
+
+# Project specific
+openenv_travel_pro.egg-info/
+output.log

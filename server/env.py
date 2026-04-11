@@ -21,7 +21,21 @@ class TravelEnv(Environment):
         self.error_log: List[str] = []
         self.price_volatility: bool = False
         self.seen_prices: Dict[int, float] = {}  # flight_id -> price at last search
+        self.last_search_flights: List[Flight] = []
+        self.last_search_hotels: List[Hotel] = []
         self.done: bool = False
+
+    def _get_city_code(self, query: str) -> str:
+        """Maps full city names to database codes."""
+        city_map = {
+            "paris": "PAR", "london": "LON", "tokyo": "TKY", "sydney": "SYD",
+            "new york": "NYC", "los angeles": "LAX", "chicago": "CHI", "san francisco": "SFO"
+        }
+        query_l = query.lower()
+        for name, code in city_map.items():
+            if name in query_l or code.lower() in query_l:
+                return code
+        return query.upper()[:3] # Fallback
 
     def reset(self, level: int = 1) -> TravelObservation:
         """
@@ -53,6 +67,8 @@ class TravelEnv(Environment):
         self.balance = self.current_goal.budget
         self.error_log = ["Environment reset successful."]
         self.seen_prices = {}
+        self.last_search_flights = []
+        self.last_search_hotels = []
         self.done = False
         
         return self._get_obs()
@@ -101,14 +117,23 @@ class TravelEnv(Environment):
         return self._get_obs(), reward, self.done, info
 
     def _get_obs(self) -> TravelObservation:
-        """Constructs the current observation."""
+        """Constructs the current observation based on last search or default."""
         db = SessionLocal()
-        flights = db.query(Flight).limit(5).all()
-        hotels = db.query(Hotel).limit(5).all()
-        db.close()
         
+        # Use last search results if available, else show defaults
+        flights = self.last_search_flights if self.last_search_flights else db.query(Flight).limit(5).all()
+        hotels = self.last_search_hotels if self.last_search_hotels else db.query(Hotel).limit(5).all()
+        
+        # Ensure we have fresh instances if we just reset (optional step for stability)
+        if self.last_search_flights:
+            flights = db.query(Flight).filter(Flight.id.in_([f.id for f in self.last_search_flights])).all()
+        if self.last_search_hotels:
+            hotels = db.query(Hotel).filter(Hotel.id.in_([h.id for h in self.last_search_hotels])).all()
+            
         options = [f"Flight {f.id}: {f.origin}->{f.destination} ${f.price:.2f}" for f in flights]
         options += [f"Hotel {h.id}: {h.name} in {h.city} ${h.price_per_night:.2f} Star: {h.rating}" for h in hotels]
+        
+        db.close()
         
         return TravelObservation(
             itinerary=self.itinerary,
@@ -165,14 +190,21 @@ class TravelEnv(Environment):
         db.close()
 
     def _handle_search(self, action: Search) -> float:
-        """Handles searching and tracks prices for expiry checks."""
+        """Handles searching with SQL filtering and tracks prices for expiry checks."""
         db = SessionLocal()
-        # In a real implementation, we'd filter by query. For now, we update seen_prices.
-        flights = db.query(Flight).all()
-        for f in flights:
+        city_code = self._get_city_code(action.query)
+        
+        # Filter DB based on city code
+        self.last_search_flights = db.query(Flight).filter(Flight.destination == city_code).limit(5).all()
+        self.last_search_hotels = db.query(Hotel).filter(Hotel.city == city_code).limit(5).all()
+        
+        # Track prices for Chaos level
+        all_flights = db.query(Flight).all()
+        for f in all_flights:
             self.seen_prices[f.id] = f.price
         db.close()
-        self.error_log.append(f"Search performed: {action.query}. Prices updated in local cache.")
+        
+        self.error_log.append(f"Search for '{action.query}' (Code: {city_code}) found {len(self.last_search_flights)} flights and {len(self.last_search_hotels)} hotels.")
         return 0.0
 
     def _handle_book(self, action: Book) -> float:

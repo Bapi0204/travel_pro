@@ -1,2 +1,0 @@
-[console_scripts]
-server = travel_pro.server.app:main
