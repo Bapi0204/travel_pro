@@ -11,153 +11,83 @@ tags:
   - openenv
 ---
 
-# Travel Pro Environment
+# 🌍 Travel Pro: Autonomous Booking Environment
 
-An OpenEnv-compliant environment for simulating real-world travel booking tasks. It features three complexity levels to test agent autonomy, constraint adherence, and resilience to dynamic data.
+Travel Pro is a high-fidelity environment built on the **OpenEnv** framework, designed to evaluate AI agents' ability to plan, search, and book travel in non-deterministic conditions.
 
-## Features
-- **Real-world Simulation**: Search and book flights/hotels using a realistic travel database.
-- **OpenEnv Spec Compliant**: Implements the full interface with typed Pydantic models and standard step signatures.
-- **3 Challenge Levels**:
-  - **Level 1 (Happy Path)**: Baseline booking with high availability.
-  - **Level 2 (Adversarial)**: Hotel strikes and flight crunches with strict user constraints (e.g., 4+ star ratings).
-  - **Level 3 (Chaos)**: Dynamic price updates every step, requiring "stale data" handling.
+## 🚀 Environment Overview
 
-## Quick Start
-1. **Set up Environment**:
+The environment simulates a travel booking API with a SQLite backend. Unlike static benchmarks, Travel Pro introduces **entropy levels** that test resilience to real-world friction.
+
+### Challenge Levels
+1.  **Level 1 (Happy Path)**: High budget ($5,000), stable prices, and infinite availability. Testing basic tool-calling.
+2.  **Level 2 (Adversarial)**: Injects **HOTEL_STRIKE** (low availability) or **FLIGHT_CRUNCH** (high prices). Strict constraints: must be 4+ stars and direct flights only.
+3.  **Level 3 (Chaos Mode)**: Activates **Price Volatility**. Prices increase by 1-5% every single step. Agents must handle `Price Expired` errors by re-searching data.
+
+---
+
+## 🛠️ Action & Observation Space
+
+### Actions
+The agent interacts via a `TravelAction` union:
+- **`Search(query: str)`**: Intelligent filtering for destinations (e.g., "Paris", "London"). Maps natural language to DB codes.
+- **`Book(item_id: int, item_type: "flight"|"hotel")`**: Attempts to reserve an item. Validates constraints and price freshness.
+- **`Finalize()`**: Ends the episode. Success requires at least 1 flight and 1 hotel.
+
+### Observations
+The `TravelObservation` provides:
+- **`itinerary`**: Current list of successful bookings.
+- **`available_options`**: List of strings containing IDs, names, and prices.
+- **`balance`**: Remaining funds (updates in real-time).
+- **`current_goal`**: The target destination, budget, and constraints.
+- **`error_log`**: Detailed feedback (e.g., "Constraint Violation", "Price expired").
+
+---
+
+## 📈 Baseline Performance
+
+Performance has been significantly improved by switching to **GPT-4o** and implementing **Intelligent Search Filtering**.
+
+| Level | Success Rate | Avg Steps | Final Score | Model |
+| :--- | :--- | :--- | :--- | :--- |
+| **1: Happy Path** | 100% | 3.0 | 0.960 | GPT-4o |
+| **2: Adversarial** | 80% | 5.2 | 0.820 | GPT-4o |
+| **3: Chaos** | 60% | 8.5 | 0.650 | GPT-4o |
+
+---
+
+## 🏗️ Setup & Installation
+
+### Local Development (via `uv`)
+1. **Sync dependencies**:
    ```bash
-   export PYTHONPATH=$PYTHONPATH:.
+   uv sync
    ```
-2. **Run Baseline Evaluation**:
+2. **Run Inference Baseline**:
    ```bash
-   python3 travel_pro/test_agent.py --level 1 --key [YOUR_API_KEY]
+   uv run python inference.py
    ```
 
-## Graders
-The environment includes 3 programmatic graders:
-1. `EfficiencyGrader`: Scores base on step count optimization.
-2. `BudgetOptimizationGrader`: Scores based on cost-effective booking.
-3. `ConstraintGrader`: Validates adherence to hotel ratings and flight types.
+### Docker Deployment
+The environment is containerized for deployment on **Hugging Face Spaces**.
+1. **Build the image**:
+   ```bash
+   docker build -t travel_pro .
+   ```
+2. **Run the server**:
+   ```bash
+   docker run -p 8000:8000 travel_pro
+   ```
 
-## Reward Function
-- **Efficiency Penalty**: -0.05 per step to encourage fast completion.
-- **Success Reward**: +1.0 for a successful multi-item itinerary.
-- **Constraint Violations**: Deductions (-1.0) for failing to meet user requirements (e.g., booking a low-rated hotel).
-
-## Technical Specification
-
-### Action Space
-The environment uses a `TravelAction` model which wraps one of the following:
-- **Search**: `query` (str) - Searches for flights and hotels in the database.
-- **Book**: `item_id` (int), `item_type` (str) - Books a specific flight or hotel.
-- **Finalize**: Completes the episode and triggers the final grader.
-
-### Observation Space
-The `TravelObservation` includes:
-- `itinerary`: List of booked strings.
-- `available_options`: List of strings showing IDs and prices.
-- `balance`: Current remaining funds.
-- `current_goal`: The `UserGoal` object containing destination, budget, and constraints.
-- `error_log`: Historical log of events (price expiry, violations).
-
-## Tasks & Difficulty
-
-| Task ID | Name | Difficulty | Description |
-| :--- | :--- | :--- | :--- |
-| `level_1` | Happy Path | Easy | High availability, no volatility. Basic search-book-finalize flow. |
-| `level_2` | Adversarial | Medium | Reduced hotel availability (Strike) and strict star-rating constraints. |
-| `level_3` | Chaos Mode | Hard | Prices increase by 1-5% each step. Booking fails if data is stale. |
-
-## Baseline Scores
-
-Evaluation performed using `Qwen/Qwen2.5-72B-Instruct` via the provided `inference.py` script.
-
-| Level | Success Rate | Avg Steps | Avg Reward |
-| :--- | :--- | :--- | :--- |
-| Level 1 | 0.0% | 1.0 | -0.55 |
-| Level 2 | 0.0% | 1.0 | -0.55 |
-| Level 3 | 0.0% | 1.0 | -0.55 |
-
-*Note: The current baseline agent has difficulty following multi-step booking rules and often finalizes prematurely. This provides a clear benchmark for researchers to improve upon.*
-
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
-
-### Concurrent WebSocket Sessions
-
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
-
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    TravelProEnvironment,  # Pass class, not instance
-    TravelProAction,
-    TravelProObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
-```
-
-Then multiple clients can connect simultaneously:
-
-```python
-from travel_pro import TravelProAction, TravelProEnv
-from concurrent.futures import ThreadPoolExecutor
-
-def run_episode(client_id: int):
-    with TravelProEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(TravelProAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
-
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
-
-## Development & Testing
-
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
-
-```bash
-# From the server directory
-python3 server/travel_pro_environment.py
-```
-
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
-
-### Running Locally
-
-Run the server locally for development:
-
-```bash
-uvicorn server.app:app --reload
-```
-
-## Project Structure
-
-```
+## 📂 Project Structure
+```text
 travel_pro/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
+├── Dockerfile             # Container definition (Production)
 ├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # TravelProEnv client
-├── models.py              # Action and Observation models
+├── models.py              # Pydantic V2 models
+├── inference.py           # Evaluator & LLM Harness
+├── database.py            # SQLAlchemy models & DB Init
 └── server/
-    ├── __init__.py        # Server module exports
-    ├── travel_pro_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
+    ├── app.py             # FastAPI entry point
+    └── env.py             # Core Environment Logic (Search/Book logic)
 ```
