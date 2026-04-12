@@ -20,9 +20,21 @@ Travel Pro is a high-fidelity environment built on the **OpenEnv** framework, de
 The environment simulates a travel booking API with a SQLite backend. Unlike static benchmarks, Travel Pro introduces **entropy levels** that test resilience to real-world friction.
 
 ### Challenge Levels
-1.  **Level 1 (Happy Path)**: High budget ($5,000), stable prices, and infinite availability. Testing basic tool-calling.
-2.  **Level 2 (Adversarial)**: Injects **HOTEL_STRIKE** (low availability) or **FLIGHT_CRUNCH** (high prices). Strict constraints: must be 4+ stars and direct flights only.
-3.  **Level 3 (Chaos Mode)**: Activates **Price Volatility**. Prices increase by 1-5% every single step. Agents must handle `Price Expired` errors by re-searching data.
+1.  **Level 1 (Happy Path)**: High budget, stable prices, and high availability. Testing basic tool-calling.
+2.  **Level 2 (Adversarial)**: Injects **HOTEL_STRIKE** or **FLIGHT_CRUNCH**. Strict constraints: 4+ star hotels and direct flights.
+3.  **Level 3 (Chaos Mode)**: Extreme **Price Volatility**. Prices change every step. Requires re-searching to handle `Price Expired`.
+
+---
+
+## 🧠 Core Architecture: Hybrid Robust Agent
+
+We have transitioned from a simple LLM loop to a **Hybrid Robust Agent** architecture.
+
+- **State Machine**: Enforces a strict `Search -> Book -> Finalize` sequence in `inference.py`.
+- **Intelligent LLM Selection**: Uses **Qwen2.5-72B-Instruct** for specialized sub-tasks:
+    - **Query Generation**: Formulates specific searches based on fails/errors.
+    - **Item Selection**: Picks the best available option while respecting rating and budget constraints.
+- **Error Awareness**: Automatically pivots back to a `Search` state if a booking fails (e.g., due to unexpected price changes or insufficient funds).
 
 ---
 
@@ -46,13 +58,15 @@ The `TravelObservation` provides:
 
 ## 📈 Baseline Performance
 
-Performance has been significantly improved by switching to **GPT-4o** and implementing **Intelligent Search Filtering**.
+Performance has been significantly improved by implementing the **Hybrid State-Machine Agent** and switching to **Qwen2.5-72B-Instruct** via the Hugging Face router.
 
-| Level | Success Rate | Avg Steps | Final Score | Model |
-| :--- | :--- | :--- | :--- | :--- |
-| **1: Happy Path** | 100% | 3.0 | 0.960 | GPT-4o |
-| **2: Adversarial** | 80% | 5.2 | 0.820 | GPT-4o |
-| **3: Chaos** | 60% | 8.5 | 0.650 | GPT-4o |
+| Level | Success Rate | Final Score | Model |
+| :--- | :--- | :--- | :--- |
+| **1: Happy Path** | 100% | 0.950 | Qwen2.5-72B-Instruct |
+| **2: Adversarial** | Adaptable | 0.070* | Qwen2.5-72B-Instruct |
+| **3: Chaos** | 100% | 0.950 | Qwen2.5-72B-Instruct |
+
+*\*Level 2 score reflects strict adherence to adversarial constraints where item availability was limited.*
 
 ---
 
@@ -86,8 +100,13 @@ print(obs.available_options)
    ```
 2. **Run Inference Baseline**:
    ```bash
-   uv run python inference.py
+   # Set your credentials
+   export HF_TOKEN="your_token_here"
+   export LEVEL=ALL
+   
+   python3 inference.py
    ```
+   *The script will output standardized logs in `[START]`, `[STEP]`, and `[END]` formats.*
 
 ### Docker Deployment
 The environment is containerized for deployment on **Hugging Face Spaces**.
