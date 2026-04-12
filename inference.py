@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import sys
 import textwrap
 from typing import List, Optional, Dict, Any
 from openai import OpenAI
@@ -14,74 +15,69 @@ from travel_pro.server.env import TravelEnv
 from travel_pro.models import TravelAction, Search, Book, Finalize
 from travel_pro.evaluator import EfficiencyGrader, BudgetOptimizationGrader, ConstraintGrader
 
-# Configuration
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-MODEL_NAME = "gpt-4o"
-BENCHMARK = "travel_pro"
-MAX_STEPS = 15
+# Configuration - Prioritize Env Vars for Evaluation
+# Configuration - Prioritize Env Vars for Evaluation
+API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY")
+MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
+BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", "travel_pro")
+LEVEL = os.getenv("LEVEL", "ALL")  # Default to running ALL levels (1, 2, 3)
+MAX_STEPS = 8
 
 SYSTEM_PROMPT = textwrap.dedent("""
-    You are an expert travel booking agent. Your goal is to fulfill the user's travel goal within budget and constraints.
+    You are an expert travel booking agent interacting with a travel environment.
+    Your goal is to fulfill the user's travel goal within budget and constraints.
     
-    CAPABILITIES & CHALLENGES:
-    - Level 1 (Happy Path): Standard booking with high availability.
-    - Level 2 (Adversarial): Dynamic events like HOTEL_STRIKE (limiting hotels) or FLIGHT_CRUNCH (high prices). Strict rating and direct-flight constraints.
-    - Level 3 (Chaos): Extreme price volatility. Prices change every step. If you see "Price expired", you MUST re-search to get current prices.
-    
-    INSTRUCTIONS:
-    1. Analyze the current Goal and Observation.
-    2. Provide a detailed reasoning for your next step.
-    3. Return your next action as a JSON object within your response.
-    
-    ACTION SCHEMAS:
-    - {"action_type": "Search", "parameters": {"query": "..."}}
-    - {"action_type": "Book", "parameters": {"item_id": 1, "item_type": "flight"}}
-    - {"action_type": "Book", "parameters": {"item_id": 1, "item_type": "hotel"}}
-    - {"action_type": "Finalize", "parameters": {}}
+    ACTION SCHEMAS (STRICT JSON ONLY):
+    1. Search: {"action_type": "Search", "parameters": {"query": "<city or flight search>"}}
+    2. Book: {"action_type": "Book", "parameters": {"item_id": 1, "item_type": "flight"|"hotel"}}
+    3. Finalize: {"action_type": "Finalize", "parameters": {}}
     
     IMPORTANT RULES:
+    - NEVER use vague queries like "current destination". Use REAL city names (e.g., Paris, Mumbai, London).
     - You MUST "Book" at least ONE flight AND one hotel before calling "Finalize".
-    - If you encounter a constraint violation or price expiry, adjust your strategy.
-    - If your itinerary is empty, always start with a "Search".
+    - If a search returns 0 results, CHANGE your query strategy. Try different cities or routes.
+    - Level 2/3 involve strikes or price changes. If you see "Price expired", you MUST re-search.
+    - If you are stuck, analyze the "Error Logs" to understand what went wrong.
     
-    Your output MUST be a JSON object with two fields: "reasoning" and "action".
-    Example:
-    {
-        "reasoning": "Since I need to go to Paris and have no results, I'll search for flights.",
-        "action": {"action_type": "Search", "parameters": {"query": "Flights to Paris"}}
-    }
+    Return your reasoning and action as a JSON object.
 """).strip()
 
 def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
-def log_step(step: int, reasoning: str, action: str, reward: float, done: bool, error: Optional[str], balance: float) -> None:
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
     error_val = error if error else "null"
     done_val = str(done).lower()
-    # Demo-style verbose reasoning in the action field
-    verbose_action = f"{reasoning} -> EXECUTING {action}"
-    print(f"[STEP] step={step} reward={reward:.2f} done={done_val} action={verbose_action} error={error_val} balance={balance:.2f}", flush=True)
+    # Format: [STEP] followed by exactly TWO spaces
+    print(f"[STEP]  step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
 
-def log_end(task: str, success: bool, steps: int, score: float, rewards: List[float], breakdown: Dict[str, float]) -> None:
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    breakdown_str = " | ".join([f"{k}: {v:.2f}" for k, v in breakdown.items()])
-    print(f"[END] task={task} score={score:.3f} steps={steps} success={str(success).lower()} rewards=[{rewards_str}]", flush=True)
-    print(f"      Score Breakdown: {breakdown_str}", flush=True)
+    # Format: [END] followed by exactly THREE spaces
+    print(f"[END]   success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}", flush=True)
 
 def get_model_response(client: OpenAI, goal: str, obs: Any, history: List[str]) -> Dict[str, Any]:
-    # Constructing a rich prompt with environment state
     obs_data = obs.model_dump()
+    last_error = obs_data['error_log'][-1] if obs_data['error_log'] else "None"
+    
     user_prompt = textwrap.dedent(f"""
-        User Goal: {goal}
-        Current Balance: ${obs_data['balance']:.2f}
-        Current Itinerary: {obs_data['itinerary']}
-        Error Logs: {obs_data['error_log']}
-        Available Options: {obs_data['available_options'][:10]}
+        [GOAL]
+        {goal}
+
+        [CURRENT STATE]
+        Balance: ${obs_data['balance']:.2f}
+        Itinerary: {obs_data['itinerary']}
+        Last Action Result/Error: {last_error}
         
-        Action History:
-        {chr(10).join(history[-5:]) if history else "No history yet."}
+        [AVAILABLE OPTIONS (First 10)]
+        {chr(10).join(obs_data['available_options'][:10]) if obs_data['available_options'] else "None"}
         
-        Return your reasoning and next action in JSON format.
+        [HISTORY]
+        {chr(10).join(history[-3:]) if history else "No history yet."}
+        
+        Analyze the Last Action Result. If it failed, adjust your strategy.
+        Respond with your 'reasoning' and 'action' in JSON.
     """).strip()
 
     try:
@@ -96,13 +92,20 @@ def get_model_response(client: OpenAI, goal: str, obs: Any, history: List[str]) 
         )
         return json.loads(completion.choices[0].message.content)
     except Exception as e:
+        print(f"DEBUG: LLM Inference Error: {e}", file=sys.stderr)
+        # Smarter Fallback: Try to search for the goal destination if model fails
+        fallback_query = "Paris" # Default fallback
+        dest_match = re.search(r"to ([A-Za-z\s]+)", goal)
+        if dest_match:
+            fallback_query = dest_match.group(1).strip()
+            
         return {
-            "reasoning": f"Error communicating with model: {e}",
-            "action": {"action_type": "Finalize", "parameters": {}}
+            "reasoning": f"Critical Error: {e}. Attempting recovery search for {fallback_query}.",
+            "action": {"action_type": "Search", "parameters": {"query": fallback_query}}
         }
 
 def run_task(level: int):
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
     level_names = {1: "HAPPY_PATH", 2: "ADVERSARIAL", 3: "CHAOS"}
     task_name = f"level_{level}_{level_names.get(level, 'UNKNOWN')}"
     log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
@@ -138,15 +141,13 @@ def run_task(level: int):
         done = obs.done
         rewards.append(reward)
         
-        # Log this step in demo style
+        # Log this step in standardized format
         log_step(
             step=step, 
-            reasoning=reasoning, 
             action=json.dumps(action_data), 
             reward=reward, 
             done=done, 
-            error=obs.error_log[-1] if obs.error_log else None,
-            balance=obs.balance
+            error=obs.error_log[-1] if obs.error_log else None
         )
         
         history.append(f"Step {step}: {reasoning} -> Action: {act_type}")
@@ -174,20 +175,27 @@ def run_task(level: int):
     final_score = (e_score * 0.2 + b_score * 0.4 + c_score * 0.4) if is_success else (e_score * 0.1)
     
     log_end(
-        task=task_name,
         success=is_success, 
         steps=len(rewards), 
         score=final_score, 
-        rewards=rewards,
-        breakdown={"Efficiency": e_score, "Budget": b_score, "Constraints": c_score}
+        rewards=rewards
     )
 
 if __name__ == "__main__":
-    if not OPENAI_API_KEY:
-        print("ERROR: OPENAI_API_KEY not found in environment.")
+    if not API_KEY:
+        print("ERROR: API_KEY/HF_TOKEN not found in environment.")
     else:
-        for level in [1, 2, 3]:
+        if LEVEL.upper() == "ALL":
+            levels_to_run = [1, 2, 3]
+        else:
+            try:
+                levels_to_run = [int(LEVEL)]
+            except ValueError:
+                print(f"ERROR: Invalid LEVEL '{LEVEL}'. Defaulting to 1.")
+                levels_to_run = [1]
+
+        for level in levels_to_run:
             try:
                 run_task(level)
             except Exception as e:
-                print(f"Failed to run level {level}: {e}")
+                print(f"Failed to run level {level}: {e}", flush=True)

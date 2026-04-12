@@ -58,11 +58,7 @@ Performance has been significantly improved by switching to **GPT-4o** and imple
 
 ## ⚡ Quick Start (Python)
 
-If you want to quickly test the environment logic without running a full LLM agent, use the `demo.py` script:
 
-```bash
-uv run python demo.py
-```
 
 ### Minimal Code Example
 ```python
