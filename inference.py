@@ -53,19 +53,19 @@ SYSTEM_PROMPT = textwrap.dedent("""
 """).strip()
 
 def log_start(task: str, env: str, model: str) -> None:
-    print(f"\n[START] task={task} env={env} model={model}", flush=True)
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
 def log_step(step: int, reasoning: str, action: str, reward: float, done: bool, error: Optional[str], balance: float) -> None:
     error_val = error if error else "null"
     done_val = str(done).lower()
     # Demo-style verbose reasoning in the action field
     verbose_action = f"{reasoning} -> EXECUTING {action}"
-    print(f"[STEP] step={step} action={verbose_action} reward={reward:.2f} done={done_val} error={error_val} balance={balance:.2f}", flush=True)
+    print(f"[STEP] step={step} reward={reward:.2f} done={done_val} action={verbose_action} error={error_val} balance={balance:.2f}", flush=True)
 
-def log_end(success: bool, steps: int, score: float, rewards: List[float], breakdown: Dict[str, float]) -> None:
+def log_end(task: str, success: bool, steps: int, score: float, rewards: List[float], breakdown: Dict[str, float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     breakdown_str = " | ".join([f"{k}: {v:.2f}" for k, v in breakdown.items()])
-    print(f"[END] success={str(success).lower()} steps={steps} final_score={score:.3f} rewards=[{rewards_str}]", flush=True)
+    print(f"[END] task={task} score={score:.3f} steps={steps} success={str(success).lower()} rewards=[{rewards_str}]", flush=True)
     print(f"      Score Breakdown: {breakdown_str}", flush=True)
 
 def get_model_response(client: OpenAI, goal: str, obs: Any, history: List[str]) -> Dict[str, Any]:
@@ -103,12 +103,12 @@ def get_model_response(client: OpenAI, goal: str, obs: Any, history: List[str]) 
 
 def run_task(level: int):
     client = OpenAI(api_key=OPENAI_API_KEY)
-    env = TravelEnv()
-    obs = env.reset(level=level)
-    
     level_names = {1: "HAPPY_PATH", 2: "ADVERSARIAL", 3: "CHAOS"}
     task_name = f"level_{level}_{level_names.get(level, 'UNKNOWN')}"
     log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
+    
+    env = TravelEnv()
+    obs = env.reset(level=level)
     
     rewards = []
     history = []
@@ -174,6 +174,7 @@ def run_task(level: int):
     final_score = (e_score * 0.2 + b_score * 0.4 + c_score * 0.4) if is_success else (e_score * 0.1)
     
     log_end(
+        task=task_name,
         success=is_success, 
         steps=len(rewards), 
         score=final_score, 
