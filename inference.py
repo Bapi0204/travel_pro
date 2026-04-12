@@ -24,6 +24,54 @@ BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", "travel_pro")
 LEVEL = os.getenv("LEVEL", "ALL")  # Default to running ALL levels (1, 2, 3)
 MAX_STEPS = 8
 
+class StateTracker:
+    def __init__(self):
+        self.has_flight = False
+        self.has_hotel = False
+        self.last_search_flights = 0
+        self.last_search_hotels = 0
+        self.itinerary = []
+        self.last_error = ""
+        self.failed_bookings = set() # (item_id, item_type)
+        
+    def update(self, obs):
+        self.itinerary = obs.itinerary
+        self.has_flight = any("Flight" in item for item in self.itinerary)
+        self.has_hotel = any("Hotel" in item for item in self.itinerary)
+        self.last_error = obs.error_log[-1] if obs.error_log else ""
+        
+        # Parse last search results from error log if available
+        if self.last_error and "found" in self.last_error and "flights" in self.last_error:
+            try:
+                match = re.search(r"found (\d+) flights and (\d+) hotels", self.last_error)
+                if match:
+                    self.last_search_flights = int(match.group(1))
+                    self.last_search_hotels = int(match.group(2))
+            except Exception: pass
+
+QUERY_GEN_PROMPT = textwrap.dedent("""
+    You are a query generator for a travel agent.
+    Goal: {goal}
+    History: {history}
+    Last Error: {error}
+    
+    Task: Generate a specific Search query (e.g., 'flights to Paris' or 'hotels in London').
+    If previous searches failed, try a different city or route.
+    Return JSON: {{"reasoning": "...", "query": "..."}}
+""").strip()
+
+CHOICE_PROMPT = textwrap.dedent("""
+    You are a selection agent for a travel agent.
+    Goal: {goal}
+    Available Options: {options}
+    Itinerary: {itinerary}
+    
+    Task: Pick the best item_id for a {item_type}.
+    Your response MUST include "item_id" as a raw INTEGER (no strings, e.g. 9 instead of "Flight 9").
+    Ensure it meets constraints (e.g., rating, direct flight).
+    Return JSON: {{"reasoning": "...", "item_id": 123}}
+""").strip()
+
 SYSTEM_PROMPT = textwrap.dedent("""
     You are an expert travel booking agent interacting with a travel environment.
     Your goal is to fulfill the user's travel goal within budget and constraints.
@@ -57,52 +105,50 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
     # Format: [END] followed by exactly THREE spaces
     print(f"[END]   success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}", flush=True)
 
-def get_model_response(client: OpenAI, goal: str, obs: Any, history: List[str]) -> Dict[str, Any]:
-    obs_data = obs.model_dump()
-    last_error = obs_data['error_log'][-1] if obs_data['error_log'] else "None"
-    
-    user_prompt = textwrap.dedent(f"""
-        [GOAL]
-        {goal}
-
-        [CURRENT STATE]
-        Balance: ${obs_data['balance']:.2f}
-        Itinerary: {obs_data['itinerary']}
-        Last Action Result/Error: {last_error}
-        
-        [AVAILABLE OPTIONS (First 10)]
-        {chr(10).join(obs_data['available_options'][:10]) if obs_data['available_options'] else "None"}
-        
-        [HISTORY]
-        {chr(10).join(history[-3:]) if history else "No history yet."}
-        
-        Analyze the Last Action Result. If it failed, adjust your strategy.
-        Respond with your 'reasoning' and 'action' in JSON.
-    """).strip()
-
+def get_choice(client: OpenAI, goal: str, options: List[str], itinerary: List[str], item_type: str, budget: float) -> Dict[str, Any]:
     try:
+        prompt = CHOICE_PROMPT.format(goal=goal, options=options[:10], itinerary=itinerary, item_type=item_type)
         completion = client.chat.completions.create(
             model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
+            messages=[{"role": "user", "content": prompt + f"\nCurrent Balance: ${budget:.2f}. Pick an affordable option."}],
             response_format={"type": "json_object"},
             temperature=0.0,
         )
-        return json.loads(completion.choices[0].message.content)
+        content = completion.choices[0].message.content
+        if "```json" in content: content = content.split("```json")[1].split("```")[0]
+        data = json.loads(content)
+        
+        # Robustly extract item_id as integer
+        raw_id = data.get("item_id")
+        if isinstance(raw_id, str):
+            id_match = re.search(r"(\d+)", raw_id)
+            if id_match: data["item_id"] = int(id_match.group(1))
+            else: data["item_id"] = 1
+        elif raw_id is None:
+            data["item_id"] = 1
+        return data
     except Exception as e:
-        print(f"DEBUG: LLM Inference Error: {e}", file=sys.stderr)
-        # Smarter Fallback: Try to search for the goal destination if model fails
-        fallback_query = "Paris" # Default fallback
-        dest_match = re.search(r"to ([A-Za-z\s]+)", goal)
-        if dest_match:
-            fallback_query = dest_match.group(1).strip()
-            
-        return {
-            "reasoning": f"Critical Error: {e}. Attempting recovery search for {fallback_query}.",
-            "action": {"action_type": "Search", "parameters": {"query": fallback_query}}
-        }
+        print(f"DEBUG: Choice Error: {e}", file=sys.stderr)
+        return {"item_id": 1}
+
+def get_query(client: OpenAI, goal: str, history: List[str], error: str) -> Dict[str, Any]:
+    try:
+        prompt = QUERY_GEN_PROMPT.format(goal=goal, history=history[-3:], error=error)
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+        )
+        content = completion.choices[0].message.content
+        if "```json" in content: content = content.split("```json")[1].split("```")[0]
+        return json.loads(content)
+    except Exception as e:
+        print(f"DEBUG: Query Error: {e}", file=sys.stderr)
+        fallback = "Paris"
+        match = re.search(r"to ([A-Za-z\s]+)", goal)
+        if match: fallback = match.group(1).strip()
+        return {"query": fallback}
 
 def run_task(level: int):
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
@@ -112,48 +158,56 @@ def run_task(level: int):
     
     env = TravelEnv()
     obs = env.reset(level=level)
+    tracker = StateTracker()
+    tracker.update(obs)
     
     rewards = []
     history = []
     
     for step in range(1, MAX_STEPS + 1):
-        response = get_model_response(client, str(obs.current_goal), obs, history)
-        reasoning = response.get("reasoning", "No reasoning provided.")
-        action_data = response.get("action", {})
+        # State machine logic
+        if "Booking failed" in tracker.last_error:
+            # Pivot back to search for different options if booking fails
+            query_res = get_query(client, str(obs.current_goal), history, f"FAILURE: {tracker.last_error}. Try to find cheaper options.")
+            action = TravelAction(type="search", query=query_res.get("query", "Paris"))
+            reasoning = f"Booking failed, re-searching: {query_res.get('reasoning')}"
+            tracker.last_search_flights = 0 # Force re-search state
+            tracker.last_search_hotels = 0
+        elif not tracker.has_flight and tracker.last_search_flights > 0:
+            choice = get_choice(client, str(obs.current_goal), obs.available_options, tracker.itinerary, "flight", obs.balance)
+            action = TravelAction(type="book", item_id=choice.get("item_id", 1), item_type="flight")
+            reasoning = choice.get("reasoning", "Booking flight.")
+        elif tracker.has_flight and not tracker.has_hotel and tracker.last_search_hotels > 0:
+            choice = get_choice(client, str(obs.current_goal), obs.available_options, tracker.itinerary, "hotel", obs.balance)
+            action = TravelAction(type="book", item_id=choice.get("item_id", 1), item_type="hotel")
+            reasoning = choice.get("reasoning", "Booking hotel.")
+        elif tracker.has_flight and tracker.has_hotel:
+            action = TravelAction(type="finalize")
+            reasoning = "Itinerary complete. Finalizing."
+        else:
+            query_res = get_query(client, str(obs.current_goal), history, tracker.last_error if tracker.last_error else "None")
+            action = TravelAction(type="search", query=query_res.get("query", "Paris"))
+            reasoning = query_res.get("reasoning", "Searching for options.")
         
-        # Convert to TravelAction model
-        act_type = action_data.get("action_type")
-        params = action_data.get("parameters", {})
-        
-        try:
-            if act_type == "Search":
-                action = TravelAction(type="search", query=params.get("query", ""))
-            elif act_type == "Book":
-                action = TravelAction(type="book", item_id=params.get("item_id"), item_type=params.get("item_type"))
-            else:
-                action = TravelAction(type="finalize")
-        except Exception as e:
-            reasoning = f"PARSING ERROR: {e}"
-            action = TravelAction(action=Finalize())
-        
+        # Execute
         obs = env.step(action)
+        tracker.update(obs)
+        
         reward = obs.reward or 0.0
         done = obs.done
         rewards.append(reward)
         
-        # Log this step in standardized format
+        # Log
         log_step(
             step=step, 
-            action=json.dumps(action_data), 
+            action=action.model_dump_json(exclude_none=True), 
             reward=reward, 
             done=done, 
-            error=obs.error_log[-1] if obs.error_log else None
+            error=obs.error_log[-1] if obs.error_log else "null"
         )
         
-        history.append(f"Step {step}: {reasoning} -> Action: {act_type}")
-        
-        if done:
-            break
+        history.append(f"Step {step}: {reasoning} -> {action.type}")
+        if done: break
 
     # Comprehensive Grading
     state = env.state
